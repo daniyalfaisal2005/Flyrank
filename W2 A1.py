@@ -44,7 +44,7 @@ async def request_validation_exception_handler(request: Request, exc: RequestVal
     return JSONResponse(status_code=400, content={"error": "Title is required and cannot be empty"})
 
 
-@app.get("/")
+@app.get("/", description="Return Task API metadata.")
 def read_root():
     return {
         "name": "Task API",
@@ -53,17 +53,17 @@ def read_root():
     }
 
 
-@app.get("/health")
+@app.get("/health", description="Check whether the API is healthy.")
 def health_check():
     return {"status": "ok"}
 
 
-@app.get("/tasks")
+@app.get("/tasks", description="List all tasks.")
 def get_tasks():
     return TASKS
 
 
-@app.get("/tasks/{task_id}")
+@app.get("/tasks/{task_id}", description="Return one task by ID.")
 def get_task(task_id: int):
     task = next((item for item in TASKS if item["id"] == task_id), None)
     if task is None:
@@ -71,7 +71,7 @@ def get_task(task_id: int):
     return task
 
 
-@app.post("/tasks", status_code=201)
+@app.post("/tasks", status_code=201, description="Create a new task.")
 def create_task(task: TaskCreate):
     new_id = max((item["id"] for item in TASKS), default=0) + 1
     new_task = {"id": new_id, "title": task.title, "done": False}
@@ -79,7 +79,7 @@ def create_task(task: TaskCreate):
     return new_task
 
 
-@app.put("/tasks/{task_id}")
+@app.put("/tasks/{task_id}", description="Update a task by ID.")
 def update_task(task_id: int, task: TaskUpdate):
     for existing in TASKS:
         if existing["id"] == task_id:
@@ -91,7 +91,7 @@ def update_task(task_id: int, task: TaskUpdate):
     raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
 
-@app.delete("/tasks/{task_id}", status_code=204)
+@app.delete("/tasks/{task_id}", status_code=204, description="Delete a task by ID.")
 def delete_task(task_id: int):
     for index, task in enumerate(TASKS):
         if task["id"] == task_id:
