@@ -1,7 +1,9 @@
+from typing import Optional
+
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 app = FastAPI()
 
@@ -22,6 +24,19 @@ class TaskCreate(BaseModel):
         if not value:
             raise ValueError("Title is required and cannot be empty")
         return value
+
+
+class TaskUpdate(BaseModel):
+    title: Optional[str] = None
+    done: Optional[bool] = None
+
+    @model_validator(mode="after")
+    def validate_fields(self):
+        if self.title is None and self.done is None:
+            raise ValueError("At least one of title or done must be provided")
+        if self.title is not None and not self.title.strip():
+            raise ValueError("Title cannot be empty")
+        return self
 
 
 @app.exception_handler(RequestValidationError)
@@ -62,6 +77,27 @@ def create_task(task: TaskCreate):
     new_task = {"id": new_id, "title": task.title, "done": False}
     TASKS.append(new_task)
     return new_task
+
+
+@app.put("/tasks/{task_id}")
+def update_task(task_id: int, task: TaskUpdate):
+    for existing in TASKS:
+        if existing["id"] == task_id:
+            if task.title is not None:
+                existing["title"] = task.title.strip()
+            if task.done is not None:
+                existing["done"] = task.done
+            return existing
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+
+
+@app.delete("/tasks/{task_id}", status_code=204)
+def delete_task(task_id: int):
+    for index, task in enumerate(TASKS):
+        if task["id"] == task_id:
+            del TASKS[index]
+            return
+    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
 
 
 if __name__ == "__main__":
