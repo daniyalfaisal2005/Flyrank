@@ -30,12 +30,15 @@ The API runs at `http://127.0.0.1:8000`. Swagger UI is available at `http://127.
 ## curl example
 
 ```powershell
-curl http://127.0.0.1:8000/health
+curl -i http://127.0.0.1:8000/health
 ```
 
 Output:
 
 ```json
+HTTP/1.1 200 OK
+content-type: application/json
+
 {"status":"ok"}
 ```
 

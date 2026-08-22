@@ -1,8 +1,8 @@
 from typing import Optional
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 app = FastAPI()
@@ -67,7 +67,7 @@ def get_tasks():
 def get_task(task_id: int):
     task = next((item for item in TASKS if item["id"] == task_id), None)
     if task is None:
-        raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+        return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
     return task
 
 
@@ -88,16 +88,16 @@ def update_task(task_id: int, task: TaskUpdate):
             if task.done is not None:
                 existing["done"] = task.done
             return existing
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+    return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
 
 
-@app.delete("/tasks/{task_id}", status_code=204, description="Delete a task by ID.")
+@app.delete("/tasks/{task_id}", description="Delete a task by ID.")
 def delete_task(task_id: int):
     for index, task in enumerate(TASKS):
         if task["id"] == task_id:
             del TASKS[index]
-            return
-    raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
+            return Response(status_code=204)
+    return JSONResponse(status_code=404, content={"error": f"Task {task_id} not found"})
 
 
 if __name__ == "__main__":
