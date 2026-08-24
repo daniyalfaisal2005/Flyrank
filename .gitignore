@@ -2,3 +2,4 @@
 .venv-3.14/
 __pycache__/
 *.pyc
+tasks.db
