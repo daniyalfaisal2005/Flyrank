@@ -1,32 +1,49 @@
-# Task API
+# Task API (W3 A2)
 
-A task CRUD API built with Python and FastAPI, now backed by SQLite for persistence.
+This version runs FastAPI + Postgres together with Docker Compose and stores tasks in Postgres instead of in-memory storage.
 
-## Why SQLite
+## Goal
 
-SQLite was chosen because it is lightweight, requires zero server setup, and stores data in a single local file. This makes it ideal for learning SQL and proving persistence while keeping setup simple.
+Run Postgres in Docker, connect the service to it through a repository layer, and start the full stack with one command.
 
-## Database file
+## Stack
 
-The database file is `tasks.db` in the project root. It is created automatically on app startup if missing.
+- App: FastAPI
+- Database: Postgres 16 (Docker)
+- Orchestration: Docker Compose
+- Config: `.env` (ignored) + `.env.example` (committed)
 
-On first run, the app also:
+## Project files for A2
 
-- creates the `tasks` table if it does not exist
-- seeds exactly three example tasks only when the table is empty
+- API and layering: `W3 A2.py`
+- Compose stack: `docker-compose.yml`
+- App image: `Dockerfile`
+- DB schema/init SQL: `sql/init.sql`
+- Env template: `.env.example`
 
-## Run
+## Environment variables
 
-Use Python 3.14 or newer with compatible FastAPI wheels:
+Copy `.env.example` to `.env` and keep `.env` private.
 
-```powershell
-py -3.14 -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -r requirements.txt
-python "W3 A1.py"
+Example values:
+
+```env
+POSTGRES_USER=task_user
+POSTGRES_PASSWORD=task_password
+POSTGRES_DB=tasks_db
+DATABASE_URL=postgresql://task_user:task_password@db:5432/tasks_db
+TASK_REPOSITORY=postgres
 ```
 
-The API runs at `http://127.0.0.1:8000`. Swagger UI is available at `http://127.0.0.1:8000/docs`.
+## Run with one command
+
+```powershell
+docker compose up --build
+```
+
+App: `http://127.0.0.1:8000`
+
+Swagger UI: `http://127.0.0.1:8000/docs`
 
 ## Endpoints
 
@@ -40,33 +57,59 @@ The API runs at `http://127.0.0.1:8000`. Swagger UI is available at `http://127.
 | PUT | `/tasks/{task_id}` | Update a task |
 | DELETE | `/tasks/{task_id}` | Delete a task |
 
-## Example SQL query
+## Architecture note (service/routes unchanged)
+
+Routes call `TaskService`, and `TaskService` depends on a repository interface. The storage swap is done by changing which repository is created (`PostgresTaskRepository` vs `InMemoryTaskRepository`), without rewriting route logic.
+
+## SQL table creation
+
+The table is created from `sql/init.sql` when the Postgres container initializes:
 
 ```sql
-SELECT * FROM tasks WHERE done = 1;
+CREATE TABLE IF NOT EXISTS tasks (
+	id SERIAL PRIMARY KEY,
+	title TEXT NOT NULL,
+	done BOOLEAN NOT NULL DEFAULT FALSE
+);
 ```
 
-This returns only completed tasks.
+## Persistence proof steps
 
-## curl example
+1. Start stack:
 
 ```powershell
-curl -i http://127.0.0.1:8000/health
+docker compose up --build
 ```
 
-Output:
+2. Create a task:
 
-```json
-HTTP/1.1 200 OK
-content-type: application/json
-
-{"status":"ok"}
+```powershell
+curl -X POST http://127.0.0.1:8000/tasks -H "Content-Type: application/json" -d '{"title":"survive restart"}'
 ```
 
-## Swagger screenshot
+3. Confirm it exists:
 
-![FastAPI Swagger UI](swagger.png)
+```powershell
+curl http://127.0.0.1:8000/tasks
+```
 
-## DB Browser screenshot
+4. Restart app + db containers:
 
-![SQLite tasks table](db-browser-screenshot.png)
+```powershell
+docker compose down
+docker compose up --build
+```
+
+5. Confirm the same task still exists:
+
+```powershell
+curl http://127.0.0.1:8000/tasks
+```
+
+Because Postgres uses a named Docker volume (`pgdata`), rows persist across restarts.
+
+Observed check in this repo:
+
+- Created task: `persist after restart`
+- Restarted both containers with `docker compose restart app db`
+- Verified the same task still existed in `GET /tasks`
