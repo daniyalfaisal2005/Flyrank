@@ -4,6 +4,7 @@ from fastapi import FastAPI
 
 from . import db
 from .config import APP_PORT
+from .routes.auth import router as auth_router
 from .routes.watches import router as watches_router
 
 
@@ -14,7 +15,8 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="PagePulse", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="PagePulse", version="0.3.0", lifespan=lifespan)
+app.include_router(auth_router)
 app.include_router(watches_router)
 
 
