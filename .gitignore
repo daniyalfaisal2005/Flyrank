@@ -5,3 +5,9 @@ __pycache__/
 tasks.db
 .env
 pgdata/
+.vscode/
+*.log
+test_*.json
+test_login.py
+server_stage0_backup.py
+server_stage1_backup.py
