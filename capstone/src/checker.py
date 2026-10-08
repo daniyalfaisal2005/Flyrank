@@ -1,6 +1,6 @@
 import time
 
-from . import db
+from . import db, summaries
 from .fetcher import FETCH_DELAY_SECONDS, fetch_page
 
 
@@ -60,6 +60,7 @@ def run_check_cycle() -> dict:
                 changed_count += 1
 
         duration_ms = int((time.perf_counter() - started) * 1000)
+    summaries.invalidate_all()
 
     summary = {
         "checked": checked,
