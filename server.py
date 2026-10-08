@@ -17,7 +17,11 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
 
-app = FastAPI()
+app = FastAPI(
+    title="FlyRank Auth API",
+    description="Secure API with Supabase Auth — signup, login, logout, and protected routes using JWT Bearer tokens.",
+    version="1.0.0",
+)
 
 security = HTTPBearer(auto_error=False)
 
