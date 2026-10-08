@@ -1,7 +1,8 @@
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel
 import supabase
 
@@ -18,6 +19,8 @@ supabase_client = supabase.create_client(SUPABASE_URL, SUPABASE_KEY)
 
 app = FastAPI()
 
+security = HTTPBearer(auto_error=False)
+
 
 class SignupRequest(BaseModel):
     email: str
@@ -32,6 +35,30 @@ class LoginRequest(BaseModel):
 @app.on_event("startup")
 def on_startup():
     print("Server running and connected to Supabase")
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    if isinstance(exc.detail, dict):
+        return JSONResponse(status_code=exc.status_code, content=exc.detail)
+    return JSONResponse(status_code=exc.status_code, content={"error": exc.detail})
+
+
+def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    if credentials is None or not credentials.credentials:
+        raise HTTPException(status_code=401, detail={"error": "Access token required"})
+
+    token = credentials.credentials
+    try:
+        result = supabase_client.auth.get_user(token)
+        user = getattr(result, "user", None)
+        if user is None:
+            raise HTTPException(status_code=401, detail={"error": "Invalid or expired token"})
+        return {"token": token, "id": user.id, "email": user.email, "created_at": user.created_at}
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=401, detail={"error": "Invalid or expired token"})
 
 
 @app.get("/health")
@@ -108,20 +135,25 @@ def public_info():
 
 
 @app.get("/protected/profile")
-async def protected_profile(request: Request):
-    auth_header = request.headers.get("Authorization", "")
-    if not auth_header.startswith("Bearer ") or not auth_header[len("Bearer "):].strip():
-        return JSONResponse(status_code=401, content={"error": "Access token required"})
+def protected_profile(user: dict = Depends(get_current_user)):
+    return {"id": user["id"], "email": user["email"], "created_at": user["created_at"]}
 
-    token = auth_header[len("Bearer "):].strip()
+
+@app.get("/protected/dashboard")
+def protected_dashboard(user: dict = Depends(get_current_user)):
+    return {
+        "message": f"Welcome to your dashboard, {user['email']}!",
+        "user": {"id": user["id"], "email": user["email"]},
+    }
+
+
+@app.post("/auth/logout", status_code=204)
+def logout(user: dict = Depends(get_current_user)):
     try:
-        result = supabase_client.auth.get_user(token)
-        user = getattr(result, "user", None)
-        if user is None:
-            return JSONResponse(status_code=401, content={"error": "Invalid or expired token"})
-        return {"id": user.id, "email": user.email, "created_at": user.created_at}
+        supabase_client.auth.admin.sign_out(user["token"])
     except Exception:
-        return JSONResponse(status_code=401, content={"error": "Invalid or expired token"})
+        pass
+    return Response(status_code=204)
 
 
 if __name__ == "__main__":
