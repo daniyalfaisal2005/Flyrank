@@ -38,6 +38,52 @@ def _iso(dt: datetime) -> str:
     return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+class RunStats:
+    """Honest counters for the end-of-run report."""
+
+    def __init__(self) -> None:
+        self.started_at = datetime.now(timezone.utc)
+        self.pages_fetched = 0
+        self.cache_hits = 0
+        self.failed_urls: list[dict] = []
+
+    def record_failure(self, url: str, reason: str) -> None:
+        self.failed_urls.append({"url": url, "reason": reason})
+
+    def duration_seconds(self) -> float:
+        return round((datetime.now(timezone.utc) - self.started_at).total_seconds(), 2)
+
+
+stats = RunStats()
+
+
+def _request(url: str):
+    """One polite GET with a single retry on timeouts and 5xx errors.
+
+    404 (gone) and 403 (denied) are never retried - asking again would turn
+    a polite robot into a pest.
+    """
+    last_error = ""
+    for attempt in (1, 2):
+        try:
+            resp = _session.get(url, timeout=TIMEOUT)
+        except requests.RequestException as exc:
+            last_error = f"network error: {exc}"
+            if attempt == 1:
+                time.sleep(1)
+                continue
+            raise FetchError(f"{last_error} (after retry)") from exc
+
+        if resp.status_code == 200:
+            return resp
+        if resp.status_code >= 500 and attempt == 1:
+            last_error = f"HTTP {resp.status_code}"
+            time.sleep(1)
+            continue
+        raise FetchError(f"HTTP {resp.status_code} for {url}", status=resp.status_code)
+    raise FetchError(f"{last_error} for {url}")
+
+
 def fetch(url: str, cache_name: str) -> tuple[str, bool, str]:
     """Fetch a URL politely, reading the local cache when possible.
 
@@ -52,22 +98,18 @@ def fetch(url: str, cache_name: str) -> tuple[str, bool, str]:
     if cache_path.exists():
         html = cache_path.read_text(encoding="utf-8")
         fetched_at = _iso(datetime.fromtimestamp(cache_path.stat().st_mtime, timezone.utc))
+        stats.cache_hits += 1
         print(f"CACHE HIT  {cache_name}  size={len(html)}")
         return html, True, fetched_at
 
-    try:
-        resp = _session.get(url, timeout=TIMEOUT)
-    except requests.RequestException as exc:
-        raise FetchError(f"request failed: {exc}") from exc
-
-    if resp.status_code != 200:
-        raise FetchError(f"HTTP {resp.status_code} for {url}", status=resp.status_code)
+    resp = _request(url)
 
     # The site serves UTF-8 but omits the charset header, so requests would
     # fall back to ISO-8859-1 and mangle characters like £ - decode explicitly.
     html = resp.content.decode("utf-8")
     now = datetime.now(timezone.utc)
     cache_path.write_text(html, encoding="utf-8")
+    stats.pages_fetched += 1
     print(f"FETCH      {cache_name}  size={len(html)}  status=200")
     time.sleep(DELAY)
     return html, False, _iso(now)
@@ -154,14 +196,15 @@ def extract_record(book: dict) -> dict:
     }
 
 
-def stage3() -> list[dict]:
-    books = discover_book_urls()
+def stage3(book_list: list[dict] | None = None) -> list[dict]:
+    books = discover_book_urls() if book_list is None else book_list
     records = []
     for i, book in enumerate(books, start=1):
         try:
             records.append(extract_record(book))
         except FetchError as exc:
             print(f"SKIP       {book['product_url']}  ({exc})")
+            stats.record_failure(book["product_url"], str(exc))
         if i % 10 == 0:
             print(f"  ... {i}/{len(books)} book pages processed")
 
@@ -271,13 +314,51 @@ def stage4(raw_records: list[dict]) -> list[dict]:
     ERRORS_PATH.write_text(json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8")
 
     print(f"valid_records={len(by_url)} invalid_records={len(errors)} stored=output/books.json")
-    return list(by_url.values())
+    return list(by_url.values()), errors
+
+
+REPORT_PATH = OUTPUT_DIR / "run-report.json"
+
+FAKE_BOOK_URL = (
+    "https://books.toscrape.com/catalogue/this-book-does-not-exist_99999/index.html"
+)
+
+
+def stage5(valid_count: int, invalid_count: int) -> dict:
+    """Write the honest end-of-run report."""
+    report = {
+        "started_at": _iso(stats.started_at),
+        "duration_seconds": stats.duration_seconds(),
+        "pages_fetched": stats.pages_fetched,
+        "cache_hits": stats.cache_hits,
+        "valid_records": valid_count,
+        "invalid_records": invalid_count,
+        "failed_pages": len(stats.failed_urls),
+        "failed_urls": stats.failed_urls,
+    }
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    REPORT_PATH.write_text(json.dumps(report, indent=2, ensure_ascii=False), encoding="utf-8")
+    print(f"run report written: failed_pages={report['failed_pages']} "
+          f"duration={report['duration_seconds']}s -> output/run-report.json")
+    return report
 
 
 def main() -> None:
+    import sys
+
+    demo_failure = "--demo-failure" in sys.argv
+
     stage1()
-    raw_records = stage3()
-    stage4(raw_records)
+    book_list: list[dict] | None = None
+    if demo_failure:
+        book_list = discover_book_urls() + [
+            {"product_url": FAKE_BOOK_URL, "source_page": "deliberately-broken"}
+        ]
+        print(f"demo: one deliberately broken URL added -> {FAKE_BOOK_URL}")
+
+    raw_records = stage3(book_list)
+    valid, errors = stage4(raw_records)
+    stage5(len(valid), len(errors))
 
 
 if __name__ == "__main__":
