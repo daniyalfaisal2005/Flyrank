@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
+from urllib.parse import urljoin
 
 import requests
+from bs4 import BeautifulSoup
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
@@ -63,8 +65,42 @@ def stage1() -> None:
     print(f"stage1 ok  page saved ({len(html)} bytes, source={state})")
 
 
+CATALOGUE_PAGES = 3
+
+
+def discover_book_urls() -> list[str]:
+    """Follow the catalogue's own 'next' links for the first 3 pages.
+
+    Returns the unique book URLs in discovery order.
+    """
+    page_url = f"{BASE_URL}/catalogue/page-1.html"
+    page_num = 0
+    discovered: list[str] = []
+
+    while page_url and page_num < CATALOGUE_PAGES:
+        page_num += 1
+        html, _ = fetch(page_url, f"catalogue-page-{page_num}.html")
+        soup = BeautifulSoup(html, "html.parser")
+
+        for a in soup.select("article.product_pod h3 a[href]"):
+            discovered.append(urljoin(page_url, a["href"]))
+
+        next_a = soup.select_one("li.next a[href]")
+        if next_a and page_num < CATALOGUE_PAGES:
+            page_url = urljoin(page_url, next_a["href"])
+        else:
+            page_url = None
+
+    unique = list(dict.fromkeys(discovered))
+    print(
+        f"catalogue_pages={page_num} discovered={len(discovered)} unique_urls={len(unique)}"
+    )
+    return unique
+
+
 def main() -> None:
     stage1()
+    discover_book_urls()
 
 
 if __name__ == "__main__":
