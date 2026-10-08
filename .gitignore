@@ -8,6 +8,7 @@ pgdata/
 .vscode/
 *.log
 test_*.json
-test_login.py
+test_*.py
+test_*.txt
 server_stage0_backup.py
 server_stage1_backup.py

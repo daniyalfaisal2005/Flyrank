@@ -1,115 +1,113 @@
-# Task API (W3 A2)
+# FlyRank Auth API — Login & Protect (W4)
 
-This version runs FastAPI + Postgres together with Docker Compose and stores tasks in Postgres instead of in-memory storage.
-
-## Goal
-
-Run Postgres in Docker, connect the service to it through a repository layer, and start the full stack with one command.
+A secure REST API built with **FastAPI** and **Supabase Auth** that handles user Sign Up, Log In, and Log Out, and protects private routes using JWT Bearer tokens.
 
 ## Stack
 
-- App: FastAPI
-- Database: Postgres 16 (Docker)
-- Orchestration: Docker Compose
-- Config: `.env` (ignored) + `.env.example` (committed)
+- **Framework:** FastAPI (Python 3.10+)
+- **Identity Provider:** Supabase Auth (issues and verifies JWTs)
+- **API Docs:** Swagger UI at `/docs`
+- **Config:** `.env` (ignored) + `.env.example` (committed)
 
-## Project files for A2
+## Setup
 
-- API and layering: `W3 A2.py`
-- Compose stack: `docker-compose.yml`
-- App image: `Dockerfile`
-- DB schema/init SQL: `sql/init.sql`
-- Env template: `.env.example`
+1. Clone the repository:
 
-## Environment variables
+```powershell
+git clone https://github.com/daniyalfaisal2005/Flyrank.git
+cd Flyrank
+```
 
-Copy `.env.example` to `.env` and keep `.env` private.
+2. Create and activate a virtual environment:
 
-Example values:
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+3. Install dependencies:
+
+```powershell
+pip install -r requirements.txt
+```
+
+4. Create a `.env` file from the template and fill in your own Supabase credentials:
+
+```powershell
+Copy-Item .env.example .env
+```
 
 ```env
-POSTGRES_USER=task_user
-POSTGRES_PASSWORD=task_password
-POSTGRES_DB=tasks_db
-DATABASE_URL=postgresql://task_user:task_password@db:5432/tasks_db
-TASK_REPOSITORY=postgres
+SUPABASE_URL=https://your-project-ref.supabase.co
+SUPABASE_KEY=your-anon-key
+PORT=3000
 ```
 
-## Run with one command
+> Find these values in your Supabase Dashboard under **Project Settings → API**.
+> **Never commit your `.env` file** — it is excluded by `.gitignore`.
+
+## Run
 
 ```powershell
-docker compose up --build
+py -3 server.py
 ```
 
-App: `http://127.0.0.1:8000`
+The server starts at `http://localhost:3000` and logs:
 
-Swagger UI: `http://127.0.0.1:8000/docs`
-
-## Endpoints
-
-| Method | Path | Description |
-| --- | --- | --- |
-| GET | `/` | Return API metadata |
-| GET | `/health` | Check API health |
-| GET | `/tasks` | List all tasks |
-| GET | `/tasks/{task_id}` | Return one task |
-| POST | `/tasks` | Create a task |
-| PUT | `/tasks/{task_id}` | Update a task |
-| DELETE | `/tasks/{task_id}` | Delete a task |
-
-## Architecture note (service/routes unchanged)
-
-Routes call `TaskService`, and `TaskService` depends on a repository interface. The storage swap is done by changing which repository is created (`PostgresTaskRepository` vs `InMemoryTaskRepository`), without rewriting route logic.
-
-## SQL table creation
-
-The table is created from `sql/init.sql` when the Postgres container initializes:
-
-```sql
-CREATE TABLE IF NOT EXISTS tasks (
-	id SERIAL PRIMARY KEY,
-	title TEXT NOT NULL,
-	done BOOLEAN NOT NULL DEFAULT FALSE
-);
+```
+Server running and connected to Supabase
 ```
 
-## Persistence proof steps
+Health check: `GET /health` → `{"status":"ok","server":"running","supabase":"connected"}`
 
-1. Start stack:
+## API Reference
+
+| Method | Path | Description | Auth Required |
+| --- | --- | --- | --- |
+| POST | `/auth/signup` | Create a new user account → 201 | No |
+| POST | `/auth/login` | Authenticate and receive JWT → 200 | No |
+| POST | `/auth/logout` | Terminate the session → 204 | Yes (Bearer) |
+| GET | `/protected/profile` | Read private user profile → 200 | Yes (Bearer) |
+| GET | `/protected/dashboard` | Read private dashboard → 200 | Yes (Bearer) |
+| GET | `/public/info` | Read public, unprotected data → 200 | No |
+| GET | `/health` | Server + Supabase connectivity check | No |
+
+### Status codes
+
+| Code | When |
+| --- | --- |
+| 200 | Successful login or read |
+| 201 | Successful sign up |
+| 204 | Successful logout |
+| 400 | Missing/empty input fields |
+| 401 | Missing, incorrect, or expired token; invalid credentials |
+| 503 | Supabase unreachable (health check) |
+
+### Example flow (curl)
 
 ```powershell
-docker compose up --build
+# 1. Sign up
+curl -X POST http://localhost:3000/auth/signup -H "Content-Type: application/json" -d '{"email":"you@example.com","password":"password123"}'
+
+# 2. Log in (returns access_token)
+curl -X POST http://localhost:3000/auth/login -H "Content-Type: application/json" -d '{"email":"you@example.com","password":"password123"}'
+
+# 3. Call a protected route
+curl http://localhost:3000/protected/profile -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
+
+# 4. Log out
+curl -X POST http://localhost:3000/auth/logout -H "Authorization: Bearer <YOUR_ACCESS_TOKEN>"
 ```
 
-2. Create a task:
+## Swagger UI
 
-```powershell
-curl -X POST http://127.0.0.1:8000/tasks -H "Content-Type: application/json" -d '{"title":"survive restart"}'
-```
+Open **http://localhost:3000/docs**, click the **Authorize** lock button, paste your JWT, and try the protected endpoints directly from the browser.
 
-3. Confirm it exists:
+![Swagger UI](swagger-auth.png)
 
-```powershell
-curl http://127.0.0.1:8000/tasks
-```
+## Security Notes
 
-4. Restart app + db containers:
-
-```powershell
-docker compose down
-docker compose up --build
-```
-
-5. Confirm the same task still exists:
-
-```powershell
-curl http://127.0.0.1:8000/tasks
-```
-
-Because Postgres uses a named Docker volume (`pgdata`), rows persist across restarts.
-
-Observed check in this repo:
-
-- Created task: `persist after restart`
-- Restarted both containers with `docker compose restart app db`
-- Verified the same task still existed in `GET /tasks`
+- Passwords are hashed and managed by Supabase — never stored in this codebase.
+- Protected routes use a reusable `get_current_user` dependency (FastAPI's equivalent of middleware) that verifies the Bearer token via `supabase.auth.get_user()`.
+- Logout revokes the session server-side, so the token becomes invalid immediately after.
+- `.env` with Supabase keys is listed in `.gitignore` and is never pushed to GitHub.
