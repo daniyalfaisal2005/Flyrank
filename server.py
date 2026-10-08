@@ -112,7 +112,16 @@ async def protected_profile(request: Request):
     auth_header = request.headers.get("Authorization", "")
     if not auth_header.startswith("Bearer ") or not auth_header[len("Bearer "):].strip():
         return JSONResponse(status_code=401, content={"error": "Access token required"})
-    return JSONResponse(status_code=401, content={"error": "Token verification not implemented"})
+
+    token = auth_header[len("Bearer "):].strip()
+    try:
+        result = supabase_client.auth.get_user(token)
+        user = getattr(result, "user", None)
+        if user is None:
+            return JSONResponse(status_code=401, content={"error": "Invalid or expired token"})
+        return {"id": user.id, "email": user.email, "created_at": user.created_at}
+    except Exception:
+        return JSONResponse(status_code=401, content={"error": "Invalid or expired token"})
 
 
 if __name__ == "__main__":
