@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+import re
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,6 +11,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
+from pydantic import BaseModel, ValidationError, field_validator
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 CACHE_DIR = BASE_DIR / "cache"
@@ -60,7 +63,9 @@ def fetch(url: str, cache_name: str) -> tuple[str, bool, str]:
     if resp.status_code != 200:
         raise FetchError(f"HTTP {resp.status_code} for {url}", status=resp.status_code)
 
-    html = resp.text
+    # The site serves UTF-8 but omits the charset header, so requests would
+    # fall back to ISO-8859-1 and mangle characters like £ - decode explicitly.
+    html = resp.content.decode("utf-8")
     now = datetime.now(timezone.utc)
     cache_path.write_text(html, encoding="utf-8")
     print(f"FETCH      {cache_name}  size={len(html)}  status=200")
@@ -169,9 +174,110 @@ def stage3() -> list[dict]:
     return records
 
 
+class BookRecord(BaseModel):
+    """The schema of a finished record. Every record must pass this before storage."""
+
+    title: str
+    product_url: str
+    price_text: str
+    price_gbp: float
+    availability_text: str
+    rating_text: str
+    description: str | None = None
+    source_page: str
+    fetched_at: str
+
+    @field_validator("title", "price_text", "availability_text", "rating_text")
+    @classmethod
+    def must_not_be_blank(cls, value: str) -> str:
+        if not value or not value.strip():
+            raise ValueError("must not be empty")
+        return value.strip()
+
+    @field_validator("product_url", "source_page")
+    @classmethod
+    def must_be_https(cls, value: str) -> str:
+        if not value.startswith("https://"):
+            raise ValueError("must be an absolute https:// URL")
+        return value
+
+    @field_validator("price_gbp")
+    @classmethod
+    def must_be_positive(cls, value: float) -> float:
+        if value <= 0:
+            raise ValueError("price must be greater than zero")
+        return value
+
+    @field_validator("rating_text")
+    @classmethod
+    def known_rating(cls, value: str) -> str:
+        if value not in RATING_WORDS:
+            raise ValueError(f"unknown rating {value!r}")
+        return value
+
+    @field_validator("fetched_at")
+    @classmethod
+    def iso_timestamp(cls, value: str) -> str:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$", value):
+            raise ValueError("must be an ISO-8601 UTC timestamp")
+        return value
+
+
+def normalize(raw: dict) -> dict:
+    """Turn raw scraped values into clean ones. Keeps raw values side by side."""
+    record = dict(raw)
+    price_text = (raw.get("price_text") or "").strip()
+    match = re.search(r"([\d,]+\.\d{2})", price_text)
+    if not match:
+        raise ValueError(f"cannot read a price from {price_text!r}")
+    record["price_gbp"] = float(match.group(1).replace(",", ""))
+    record["title"] = (raw.get("title") or "").strip()
+    record["product_url"] = (raw.get("product_url") or "").strip()
+    return record
+
+
+BOOKS_PATH = OUTPUT_DIR / "books.json"
+ERRORS_PATH = OUTPUT_DIR / "errors.json"
+
+
+def stage4(raw_records: list[dict]) -> list[dict]:
+    good: list[dict] = []
+    errors: list[dict] = []
+
+    for raw in raw_records:
+        try:
+            normalized = normalize(raw)
+        except ValueError as exc:
+            errors.append({"product_url": raw.get("product_url"), "reason": str(exc)})
+            continue
+        try:
+            record = BookRecord(**normalized)
+        except ValidationError as exc:
+            reason = "; ".join(
+                f"{'.'.join(str(loc) for loc in err['loc'])}: {err['msg']}"
+                for err in exc.errors()
+            )
+            errors.append({"product_url": raw.get("product_url"), "reason": reason})
+            continue
+        good.append(record.model_dump())
+
+    # Idempotent store: the canonical product_url is the record's identity,
+    # so a rerun overwrites the same 60 records instead of appending.
+    by_url = {r["product_url"]: r for r in good}
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    BOOKS_PATH.write_text(
+        json.dumps(list(by_url.values()), indent=2, ensure_ascii=False), encoding="utf-8"
+    )
+    ERRORS_PATH.write_text(json.dumps(errors, indent=2, ensure_ascii=False), encoding="utf-8")
+
+    print(f"valid_records={len(by_url)} invalid_records={len(errors)} stored=output/books.json")
+    return list(by_url.values())
+
+
 def main() -> None:
     stage1()
-    stage3()
+    raw_records = stage3()
+    stage4(raw_records)
 
 
 if __name__ == "__main__":
