@@ -8,6 +8,7 @@ from .checker import run_check_cycle
 from .config import APP_PORT, CHECK_INTERVAL_MINUTES
 from .routes.auth import router as auth_router
 from .routes.jobs import router as jobs_router
+from .routes.reports import router as reports_router
 from .routes.watches import router as watches_router
 
 
@@ -35,6 +36,7 @@ app = FastAPI(title="PagePulse", version="0.4.0", lifespan=lifespan)
 app.include_router(auth_router)
 app.include_router(watches_router)
 app.include_router(jobs_router)
+app.include_router(reports_router)
 
 
 @app.get("/health")
